@@ -50,3 +50,12 @@ To run the analysis locally, ensure you have the following R libraries installed
 
 ```r
 install.packages(c("readxl", "tseries", "forecast", "dygraphs", "ggplot2"))
+```
+
+## 👥 Authors
+
+* **Lauro Aguiar**
+* **José Pedro**
+
+---
+This project is academic and educational in nature, developed within the scope of the Econometrics II course.
