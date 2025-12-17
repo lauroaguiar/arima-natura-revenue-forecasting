@@ -1,0 +1,277 @@
+---
+title: "AC Econometria II"
+author: "José Pedro e Lauro Aguiar"
+date: "16/11/2022"
+output:
+  pdf_document:
+    toc: yes
+  html_document:
+    toc: yes
+    toc_float:
+      collapsed: no
+      smooth_scroll: no
+always_allow_html: true
+---
+
+![](Logo_Ibmec_Azul.png)
+
+# 1 Introdução:
+
+Trabalho elaborado para a disciplina de Econometria de Séries Temporais da Faculdade Ibmec, sob orientação do professor Frank Pinho. Neste trabalho, iremos realizar tentar encontrar o processo determinístico de uma série temporal. Nesse contexto, escolhemos a receita bruta da Natura & Co.
+
+```{r}
+source("/cloud/project/frankfiles/install_and_load_packages.R")
+```
+
+# 2 Carregando a base de dados:
+
+```{r}
+dados <- read_xlsx("/cloud/project/frankfiles/ACEcoII/Natura_Revenue.xlsx")
+
+# Convertendo os vetores númericos em um objeto de série temporal
+dados <- ts(dados, frequency = 4, start = c(2003,1))
+```
+
+# 3 Visualizando os dados:
+
+```{r}
+plot(dados, main = "Gráfico da série original")  
+dygraph(dados)
+plot(decompose(dados))
+```
+
+**Interpretação:** Desde 2003 (início da série) podemos observar uma variação positiva da receita no quarto trimestre do ano até os anos atuais, indicando uma forte sazonalidade que se estende por mais de uma década. Evidentemente, esse processo é explicado pela configuração do setor varejista que é impactado pelas festividades do final do ano, como o dia das crianças (Outubro), Black Friday (Novembro), Natal e Ano Novo (Dezembro).
+
+Além disso, é nítido uma tendência de crescimento da receita bruta, especialmente de 2019 adiante.
+
+**Ajuste no modelo:** Como a receita da Natura apresenta grande variabilidade (240k - 12bi), iremos trabalhar com o logaritmo dos dados:
+
+```{r}
+dados_log <- log(dados)
+plot.ts(dados_log, main = "Gráfico do Log da Série original")
+```
+
+# 4 Indicação de um possível modelo da série - a ser validado no nosso trabalho:
+
+A função auto.arima() em R utiliza uma variação do algoritmo Hyndman-Khandakar (Hyndman & Khandakar, 2008), que combina testes de raiz unitária, minimização do AICc e MLE para obter um modelo ARIMA. Os argumentos para auto.arima() fornecem muitas variações no algoritmo. O que é descrito aqui é o comportamento padrão.
+
+[![](passo_a_passo.png "Hyndman-Khandakar algorithm for automatic ARIMA modelling")](https://otexts.com/fpp2/arima-r.html)
+
+Referência: Hyndman, R. J., & Khandakar, Y. (2008). Automatic time series forecasting: The forecast package for R. Journal of Statistical Software, 27(1), 1--22. [[DOI]](https://www.jstatsoft.org/article/view/v027i03 "Automatic Time Series Forecasting: The forecast Package for R").
+
+```{r}
+auto.arima(dados_log)
+```
+Utilizamos o algoritmo Hyndman-Khandakar apenas para tentar comparar com nosso resultado final.
+
+# 5 Verificando estacionariedade por meio da FAC e do teste Dickey-Fuller:
+
+**Função de Autocorrelação da série transformada:**
+
+```{r}
+dados_log %>% ggtsdisplay(main = "FAC e FACP da Série-Log")
+```
+
+**Interpretação:** Ao observar a FAC é perceptível um decaimento lento nos lags, indicando que o modelo não é estacionário. Para confirmar essa tese, devemos realizar o teste Dickey Fuller abaixo onde será possível perceber a presença de raiz unitária.
+
+**Teste Dickey-Fuller:**
+
+-   H0: Processo não estacionário - uma raíz unitária.
+-   H1: Processo estacionário - sem raízes unitárias.
+
+```{r}
+adf_dados_log <- fUnitRoots::adfTest(dados_log, lags = 4, type = c("nc"))
+adf_dados_log
+```
+
+**Interpretação:** Com um p-valor de 0.9728 o teste não rejeitou a hipotese nula de que o processo é não estacionário. Portanto, devemos fazer a diferenciação dos dados até se tornarem estacionários. Como os dados possuem uma tendência de crescimento, devemos fazer a diferenciação primeiro da série e depois uma diferenciação da sazonalidade.
+
+# 6 Realizando a diferenciação dos dados **não sazonais** da série e analisando a FAC correspondente:
+
+```{r}
+# Diferenciação dos dados - lag 1
+dados_log_diff <- timeSeries::diff(dados_log, lag = 1, differences = 1)
+
+# FAC dos dados resultantes
+dados_log_diff %>% ggtsdisplay(main = "FAC e FACP da diferença da Série-Log")
+```
+
+**Interpretação:** Dessa forma, fazendo a diferenciação dos dados não sazonais já eliminamos o decaimento lento na FAC. Contudo, como há ainda um decaimento lento nos lags sazonais, será necessário mais uma diferenciação: agora com os lags sazonais. 
+
+# 7 Realizando a diferenciação dos **dados sazonais** e analisando a FAC correspondente:
+
+```{r}
+# Diferenciação dos dados - lag 1
+dados_log_diff_saz <- timeSeries::diff(dados_log_diff, lag = 4, differences = 1, lag.max = 48)
+
+# FAC e FACP dos dados resultantes
+dados_log_diff_saz %>% ggtsdisplay(main = "FAC e FACP da diferença da Série-Log considerando efeito sazonal")
+```
+
+**Interpretação:** 
+Com a diferenciação tanto dos dados não sazonais quanto dos dados sazonais, podemos inferir que o modelo é um 
+ARIMA (1,1,1)(1,1,1)_[4].
+
+# 8 Testando a estacionaridade da série diferenciada:
+
+**Teste Dickey-Fuller** 
+-   H0: Processo não estacionário - uma raíz unitária. 
+-   H1: Processo estacionário - sem raízes unitárias.
+
+```{r}
+fUnitRoots::adfTest(dados_log_diff_saz, lags = 4, type = c("nc"))
+```
+
+**Interpretação:** Como o p-valor foi inferior a 0.05 concluímos que a série agora é estacionária, já que o teste rejeitou a hipótese nula de não estacionariedade do processo.
+
+# 9 Estimando todas as combinações de modelos possíveis do modelo SARIMA (p,d,q)(P,D,Q)_S.
+
+```{r}
+#Estimando as combinações possíveis de modelos: 
+modelos_possiveis <- expand.grid (ar = 1, diff = 1, ma = 1, ars = 0:1, diffs = 0:1, mas = 0:1)
+#Armazenando os resultados de cada modelo
+modelos <- list()
+```
+
+**Interpretação:** Extraímos as informações com base na análise da FAC e FACP para a construção dos modelos possíveis.
+
+# 10 Estimando os parâmetros dos modelos utilizando a máxima verossimilhança (ML):
+
+-   Por default, a função ARIMA utiliza a hipótese de que o termo de erro dos modelos ARIMA seguem uma distribuição normal.
+
+```{r}
+for (i in 1:nrow(modelos_possiveis)) {
+  modelos[[i]] <- arima(x = dados, order = unlist(modelos_possiveis[i, 1:3]), 
+                        seasonal = list(order = unlist(modelos_possiveis[i,4:6]), period = 4), method = "ML")
+}
+```
+
+-   Obtendo o logaritmo da verossimilhança (valor máximo da função):
+
+```{r}
+log_verossimilhanca <- list()
+
+for (i in 1:length(modelos)){
+  log_verossimilhanca[[i]] <- modelos[[i]]$loglik
+}
+```
+
+-   Calculando o AIC:
+
+```{r}
+aic_sarima <- list()
+
+for (i in 1:length(modelos)) {
+  aic_sarima[[i]] <- stats::AIC(modelos[[i]])
+}
+```
+
+-   Calculando o BIC:
+
+```{r}
+
+bic_sarima <- list()
+
+for (i in 1:length(modelos)) {
+  bic_sarima[[i]] <- stats::BIC(modelos[[i]])
+}
+```
+
+-   Quantidade de parâmetros estimados por modelo:
+
+```{r}
+# 
+quant_parametros <- list()
+
+for (i in 1:length(modelos)) {
+  quant_parametros[[i]] <- length(modelos[[i]]$coef)+1 
+}
+```
+
+-   Montando a tabela com os resultados:
+
+```{r}
+especificacao <- paste0("SARIMA",modelos_possiveis$ar, modelos_possiveis$diff, modelos_possiveis$ma, modelos_possiveis$ars,
+                        modelos_possiveis$diffs, modelos_possiveis$mas)
+
+resultado <- data.frame(especificacao,
+                        ln_verossimilhanca = unlist(log_verossimilhanca),
+                        quant_parametros = unlist(quant_parametros),                         
+                        aic = unlist(aic_sarima), 
+                        bic = unlist(bic_sarima))
+print(resultado)
+```
+
+# 11 Escolhendo dentre todos os modelos estimados no passo anterior, o modelo com menor AIC e/ou BIC.
+
+```{r}
+best1 <- which.min(resultado$aic)
+print(best1)
+
+best2 <- which.min(resultado$bic)
+print(best2)
+```
+
+**Interpretação:** Dessa forma, conseguimos encontrar dois modelos com base no Akaike (AIC) e o Critério Bayesiano de Schwarz (BIC), sendo que pelo AIC o modelo com maior verossimilhança é o modelo 7: SARIMA111011, com 4 parâmetros. Já o BIC selecionou o modelo 3: SARIMA111010, com 3 parâmetros.
+
+# 12 Validação do modelo:
+
+**Teste de autocorrelação dos resíduos:** 
+-   H0: resíduos não são autocorrelacionados.
+-   H1: resíduos são autocorrelacionados.
+
+```{r}
+Box.test(modelos[[best1]]$residuals,type="Ljung",lag = 8)
+```
+
+**Teste de heterocedasticidade condicional:** 
+-   H0: quadrado dos resíduos são não autocorrelacionados. Homocedasticidade, logo: variância é constante. 
+-   H1: quadrado dos resíduos são autocorrelacionados. Heterocedasticidade, logo: variância não é constante.
+
+```{r}
+Box.test(modelos[[best1]]$residuals^2,type="Ljung",lag = 8)
+```
+
+**Teste de normalidade dos resíduos | Jarque Bera:** 
+-   H0: resíduos são normalmente distribuídos. 
+-   H1: resíduos não são normalmente distribuídos.
+
+```{r}
+normalTest(modelos[[best1]]$residuals, method = "jb")
+```
+
+**Interpretação geral da validação:** No primeiro momento o teste de autocorrelação aponta que o modelo possui resíduos que não são autocorrelacionados, com um p-valor de 0.21. Dentro disso, o teste de heterocedasticidade condicional indicou que o modelo é homocedástico.
+
+Contudo, mesmo realizar diversas diferenciações, alterar os parâmetros e utilizar o algortimo Hyndman-Khandakar o teste de normalidade dos resíduos do modelo não foi aceito, sendo que o p-valor de 2.2e-16 indica que a distribuição dos resíduos não é normal.
+
+Dessa forma, faremos as previsões com a finalidade de conclusão do trabalho para fins didáticos, mesmo compreendendo que os resíduos ao não seguirem uma distribuição normal estarão impactando negativamente nossa previsibilidade.
+
+# 13 Realizando previsões utilizando o modelo ARIMA(1,1,1)(1,1,1)[4].
+
+```{r}
+modelo_prev <- arima(dados, order = c(1,1,1), seasonal = list(order=c(1,1,1), period = 4))
+prev <- predict(modelo_prev, n.ahead = 4)
+print(prev)
+```
+
+#14 Plotando o gráfico da previsão:
+
+Previsão do valor médio condicional esperado e respectivo desvio:
+
+-   *Object:* O modelo escolhido anteriormente.
+-   *Level:* O intervalo de confiança (abaixo, 80%).
+-   *h:* O horizonte de previsão.
+
+```{r}
+plot(forecast::forecast(object = modelo_prev, h = 4, level = 0.95))
+```
+
+#15 Gráfico Real x Previsto:
+
+```{r}
+par(mfrow=c(1,1))
+fitted_modelo <- stats::fitted(modelo_prev)
+plot(fitted_modelo, type = "l", lty = 1, col = 2)
+lines(dados, type = "l", lty = 1, col = 4)
+legend("topleft", legend = c("Ajustado", "Real"), col = c(1,2), lty = c(1,3))
+```
